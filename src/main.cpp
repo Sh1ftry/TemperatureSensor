@@ -4,7 +4,7 @@
 #include <RF24.h>
 #include "sensors/TemperatureAndHumidity.h"
 
-const uint8_t SW_RX=12, SW_TX=13, TH_PIN=14;
+const uint8_t TH_PIN=8;
 const uint16_t BAUD_RATE=9600;
 Sensors::TemperatureAndHumidity thSensor(TH_PIN);
 RF24 radio(9, 10);
@@ -23,6 +23,7 @@ void setup()
     radio.setRetries(3, 5);
     radio.openWritingPipe(address);
     radio.stopListening();
+    radio.printDetails();
   } else {
     Log.error("Failed");
   }
@@ -31,6 +32,9 @@ void setup()
 void loop()
 {
   delay(1000);
+  auto reading = thSensor.read();
+  Log.verbose(F("Temperature %f *C and humidity %f %"), 
+    reading.temperature, reading.humidity);
   Log.trace(F("Sending data"));
   char data[32] = "123";
   bool result = radio.write(data, sizeof(data));
