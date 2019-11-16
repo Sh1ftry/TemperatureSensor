@@ -11,14 +11,6 @@ namespace Sensors {
         private:
             DHT dht;
         public:
-            class Measurement
-            {
-                public:
-                    Measurement(float t, float h): temperature(t), humidity(h) {}
-                    const float temperature;
-                    const float humidity;
-            };
-            
             TemperatureAndHumidity(uint8_t pin): dht(pin, DHT22) {}
             
             void init()
@@ -27,15 +19,24 @@ namespace Sensors {
                 dht.begin();
             }
 
-            Sensors::TemperatureAndHumidity::Measurement read()
+            float readTemperature()
             {
-                Log.notice(F("Reading DHT sensor"));
-                float h = dht.readHumidity();
+                Log.notice(F("Reading temperature"));
                 float t = dht.readTemperature();
-                if (isnan(h) || isnan(t)) {
-                    return Sensors::TemperatureAndHumidity::Measurement(-1., -1.);
+                if (isnan(t)) {
+                    return -1.f;
                 }
-                return Sensors::TemperatureAndHumidity::Measurement(t, h);
+                return t;
+            }
+
+            float readHumidity()
+            {
+                Log.notice(F("Reading humidity"));
+                float h = dht.readHumidity();
+                if (isnan(h)) {
+                    return -1.f; 
+                }
+                return h;
             }
     };
 }

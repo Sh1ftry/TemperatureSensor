@@ -4,9 +4,8 @@
 #include <RF24.h>
 #include "sensors/TemperatureAndHumidity.h"
 
-const uint8_t TH_PIN=8;
 const uint16_t BAUD_RATE=9600;
-Sensors::TemperatureAndHumidity thSensor(TH_PIN);
+Sensors::TemperatureAndHumidity thSensor(3);
 RF24 radio(9, 10);
 const uint64_t address = 0xABCDABCD71LL;
 
@@ -23,23 +22,27 @@ void setup()
     radio.setRetries(3, 5);
     radio.openWritingPipe(address);
     radio.stopListening();
-    radio.printDetails();
   } else {
-    Log.error("Failed");
+    Log.error("Radio configuration failed");
   }
 }
 
+struct Packet {
+  byte address;
+  byte type;
+  float data;
+} packet;
+
 void loop()
 {
-  delay(1000);
-  auto reading = thSensor.read();
-  Log.verbose(F("Temperature %f *C and humidity %f %"), 
-    reading.temperature, reading.humidity);
-  Log.trace(F("Sending data"));
-  char data[32] = "123";
-  bool result = radio.write(data, sizeof(data));
-  if(result)
+  delay(5000);
+
+  packet.address = 123;
+  packet.type = 0;
+  packet.data = thSensor.readTemperature();
+
+  if(!radio.write(&packet, sizeof(packet)))
   {
-    Log.trace(F("Ack received"));
+    Log.warning(F("Ack not received"));
   }
 }
