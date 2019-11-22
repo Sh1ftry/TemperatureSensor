@@ -4,10 +4,24 @@
 #include <RF24.h>
 #include "sensors/TemperatureAndHumidity.h"
 
+#include <avr/wdt.h>
+#include <avr/sleep.h>
+#include <avr/interrupt.h>
+
 const uint16_t BAUD_RATE=9600;
 Sensors::TemperatureAndHumidity thSensor(3);
 RF24 radio(9, 10);
 const uint64_t address = 0xABCDABCD71LL;
+
+void setupWatchdog()
+{
+  cli();
+  wdt_reset();
+  MCUSR &= ~(1<<WDRF);
+  WDTCSR |= (1<<WDCE) | (1<<WDE);
+  WDTCSR = (1<<WDIE) | (1<<WDP3) | (1<<WDP0);
+  sei();
+}
 
 void setup()
 {
@@ -23,26 +37,51 @@ void setup()
     radio.openWritingPipe(address);
     radio.stopListening();
   } else {
-    Log.error("Radio configuration failed");
+    Log.error("F(Radio configuration failed)");
+  }
+
+  setupWatchdog();
+}
+
+void sleep(int desiredSleepCycles)
+{
+  int sleepCycles = 0;
+  while(sleepCycles < desiredSleepCycles)
+  {
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    sleep_mode();
+    sleepCycles++;
   }
 }
 
-struct Packet {
-  byte address;
-  byte type;
-  float data;
+ISR(WDT_vect)
+{
+  wdt_reset();
+}
+
+struct Packet
+{
+  uint8_t address;
+  char payload[31];
 } packet;
 
 void loop()
 {
-  delay(5000);
-
   packet.address = 123;
-  packet.type = 0;
-  packet.data = thSensor.readTemperature();
+  
+  char tempBuffer[8] = {0};
+  char humBuffer[8] = {0};
+  dtostrf(thSensor.readTemperature(), 3, 2, tempBuffer);
+  dtostrf(thSensor.readHumidity(), 3, 2, humBuffer);
+
+  memset(packet.payload, 0, sizeof(packet.payload));
+  sprintf(packet.payload, "%s,%s", tempBuffer, humBuffer);
 
   if(!radio.write(&packet, sizeof(packet)))
   {
     Log.warning(F("Ack not received"));
   }
+
+  Serial.flush();
+  sleep(2);
 }
