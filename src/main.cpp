@@ -2,86 +2,97 @@
 #include <ArduinoLog.h>
 #include <SoftwareSerial.h>
 #include <RF24.h>
-#include "sensors/TemperatureAndHumidity.h"
 
-#include <avr/wdt.h>
-#include <avr/sleep.h>
-#include <avr/interrupt.h>
+#include "../include/THSensor.h"
+#include "../include/Device.h"
+#include "../include/Configurator.h"
+#include "../include/Packet.h"
 
-const uint16_t BAUD_RATE=9600;
-Sensors::TemperatureAndHumidity thSensor(3);
-RF24 radio(9, 10);
-const uint64_t address = 0xABCDABCD71LL;
+#define DEBUG true
+#define BAUD_RATE 9600
+#define TH_POWER_PIN 6
+#define TH_DATA_PIN 7
+#define RADIO_CE_PIN 8
+#define RADIO_CS_PIN 9
+#define RADIO_RETRY_DELAY_MS 3
+#define RADIO_RETRIES 5
+#define GATEWAY_ADDRESS 0xABCDABCD71LL
+#define DEVICE_ID 123
+#define CONFIGURATION_INTERRUPT_PIN 3
+#define MAX_CONFIGURATION_TIME_MS 30000
 
-void setupWatchdog()
-{
-  cli();
-  wdt_reset();
-  MCUSR &= ~(1<<WDRF);
-  WDTCSR |= (1<<WDCE) | (1<<WDE);
-  WDTCSR = (1<<WDIE) | (1<<WDP3) | (1<<WDP0);
-  sei();
-}
+Packet packet = Packet();
+THSensor thSensor(TH_DATA_PIN, TH_POWER_PIN);
+
+RF24 radio(RADIO_CE_PIN, RADIO_CS_PIN);
+Configurator configurator(CONFIGURATION_INTERRUPT_PIN, MAX_CONFIGURATION_TIME_MS, radio);
 
 void setup()
 {
   Serial.begin(BAUD_RATE);
-
-  Log.begin(LOG_LEVEL_VERBOSE, &Serial);
-  Log.setSuffix([](Print* _logOutput){_logOutput->print('\n');});
-  thSensor.init();
-  if(radio.begin()) {
+  Device::enableLogging(LOG_LEVEL_VERBOSE);
+  Device::enableWatchdog();
+  
+  pinMode(INPUT_PULLUP, CONFIGURATION_INTERRUPT_PIN);
+  configurator.setup();
+  
+  thSensor.setup();
+  
+  if(radio.begin())
+  {
     radio.setPALevel(RF24_PA_MIN);
     radio.setDataRate(RF24_250KBPS);
-    radio.setRetries(3, 5);
-    radio.openWritingPipe(address);
-    radio.stopListening();
-  } else {
+    radio.setRetries(RADIO_RETRY_DELAY_MS, RADIO_RETRIES);
+  }
+  else
+  {
     Log.error("F(Radio configuration failed)");
   }
 
-  setupWatchdog();
-}
-
-void sleep(int desiredSleepCycles)
-{
-  int sleepCycles = 0;
-  while(sleepCycles < desiredSleepCycles)
+  while(!configurator.isConfigurationAvailable())
   {
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-    sleep_mode();
-    sleepCycles++;
+    #if DEBUG==true
+    Serial.flush();
+    #endif
+    Device::sleep(UINT64_MAX, configurationRequested);
+    configurator.loop();
   }
-}
 
-ISR(WDT_vect)
-{
-  wdt_reset();
+  radio.openWritingPipe(configurator.getGatewayAddress());
+  radio.stopListening();
 }
-
-struct Packet
-{
-  uint8_t address;
-  char payload[31];
-} packet;
 
 void loop()
 {
-  packet.address = 123;
+  thSensor.wake();
   
-  char tempBuffer[8] = {0};
-  char humBuffer[8] = {0};
-  dtostrf(thSensor.readTemperature(), 3, 2, tempBuffer);
-  dtostrf(thSensor.readHumidity(), 3, 2, humBuffer);
-
-  memset(packet.payload, 0, sizeof(packet.payload));
-  sprintf(packet.payload, "%s,%s", tempBuffer, humBuffer);
-
-  if(!radio.write(&packet, sizeof(packet)))
+  #if DEBUG==true
+  Serial.flush();
+  #endif
+  
+  Device::sleep(2, configurationRequested);
+  configurator.loop();
+  
+  radio.powerUp();
+  
+  auto reading = thSensor.getReading(true);
+  thSensor.sleep();
+  
+  if(reading.valid)
   {
-    Log.warning(F("Ack not received"));
+    packet.id = configurator.getDeviceId();
+    reading.getAsString(packet.payload);
+    Log.trace(F("Sending Packet(id=%d,payload='%s')"), packet.id, packet.payload);
+    radio.write(&packet, sizeof(packet));
   }
 
+  radio.powerDown();
+  memset(packet.payload, 0, sizeof(packet.payload));
+  
+  #if DEBUG==true
   Serial.flush();
-  sleep(2);
+  #endif
+  
+  Device::sleep(8, configurationRequested);
+  configurator.loop();
 }
